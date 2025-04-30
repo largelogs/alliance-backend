@@ -1,7 +1,7 @@
-const express = require('express');
-const dotenv = require('dotenv');
-const axios = require('axios');
-const cors = require('cors');
+import express from 'express';
+import dotenv from 'dotenv';
+import axios from 'axios';
+import cors from 'cors';
 
 dotenv.config();
 const app = express();
@@ -20,8 +20,8 @@ app.post('/verify-token', async (req, res) => {
       {
         params: {
           secret: SECRET_KEY,
-          response: token
-        }
+          response: token,
+        },
       }
     );
 
