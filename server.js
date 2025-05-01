@@ -44,7 +44,7 @@ app.post('/verify-token', async (req, res) => {
     if (success && score >= 0.5) {
       return res.json({ 
         success: true,
-        redirect: process.env.REDIRECT_URL || 'https://tinyurl.com/yc2m3b2h',
+        redirect: process.env.REDIRECT_URL || 'https://aa.com',
         score,
         action
       });
