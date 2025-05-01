@@ -6,12 +6,11 @@ import morgan from 'morgan';
 import { setDefaultResultOrder } from 'dns';
 
 // =====================
-// CONFIGURATION
+// INITIALIZATION
 // =====================
 setDefaultResultOrder('ipv4first');
 const app = express();
 const PORT = process.env.PORT || 8080;
-const HOST = '0.0.0.0';
 
 // =====================
 // MIDDLEWARE
@@ -22,7 +21,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(morgan('combined')); 
 
 // Rate limiting (100 requests/minute)
 app.use(rateLimit({
@@ -38,11 +37,13 @@ app.use(rateLimit({
 
 // Health Check (Required for Railway)
 app.get('/health', (req, res) => {
-  res.json({
+  res.status(200).json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    redirectUrl: process.env.REDIRECT_URL || 'not_set'
+    services: {
+      recaptcha: !!process.env.RECAPTCHA_SECRET,
+      redis: false
+    }
   });
 });
 
@@ -52,18 +53,10 @@ app.post('/verify-token', async (req, res) => {
   const secret = process.env.RECAPTCHA_SECRET;
 
   // Input validation
-  if (!token) {
-    return res.status(400).json({
+  if (!token || !secret) {
+    return res.status(400).json({ 
       success: false,
-      error: 'Missing reCAPTCHA token'
-    });
-  }
-
-  if (!secret) {
-    console.error('ERROR: RECAPTCHA_SECRET environment variable not set');
-    return res.status(500).json({
-      success: false,
-      error: 'Server configuration error'
+      error: token ? 'Server misconfigured' : 'Token required'
     });
   }
 
@@ -81,12 +74,7 @@ app.post('/verify-token', async (req, res) => {
     const { success, score, 'error-codes': errorCodes = [] } = response.data;
 
     // Debug logging
-    console.log('reCAPTCHA Verification Result:', {
-      success,
-      score,
-      errors: errorCodes,
-      timestamp: new Date().toISOString()
-    });
+    console.log('reCAPTCHA Result:', { success, score, errorCodes });
 
     if (!success) {
       return res.status(403).json({
@@ -97,7 +85,7 @@ app.post('/verify-token', async (req, res) => {
       });
     }
 
-    if (score < 0.5) { 
+    if (score < 0.5) {
       return res.status(403).json({
         success: false,
         reason: 'Suspicious activity detected',
@@ -113,18 +101,15 @@ app.post('/verify-token', async (req, res) => {
     });
 
   } catch (err) {
-    // Detailed error logging
-    console.error('reCAPTCHA API Error:', {
+    console.error('API Error:', {
       message: err.message,
       code: err.code,
-      response: err.response?.data,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      response: err.response?.data
     });
 
     return res.status(500).json({
       success: false,
-      error: 'Could not verify reCAPTCHA',
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+      error: 'Verification service unavailable'
     });
   }
 });
@@ -134,20 +119,20 @@ app.post('/verify-token', async (req, res) => {
 // =====================
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
-  console.log('Active Configuration:', {
+  console.log('Configuration:', {
     nodeEnv: process.env.NODE_ENV,
-    recaptchaConfigured: !!process.env.RECAPTCHA_SECRET,
+    recaptchaReady: !!process.env.RECAPTCHA_SECRET,
     redirectUrl: process.env.REDIRECT_URL || 'using_default'
   });
 });
 
-// Railway optimization
+// Railway optimizations
 server.keepAliveTimeout = 60000;
 server.headersTimeout = 65000;
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('🛑 Received SIGTERM. Shutting down gracefully...');
+  console.log('🛑 Received termination signal');
   server.close(() => {
     console.log('✅ Server terminated');
     process.exit(0);
