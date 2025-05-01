@@ -4,59 +4,119 @@ import axios from 'axios';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
-import { fileURLToPath } from 'url';
-import path from 'path';
 
-// Fix for __dirname equivalent in ESM
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+// Initialize environment variables first
 dotenv.config();
+
 const app = express();
-app.set('trust proxy', 1);
 
-// Middleware
-app.use(cors());
+// Critical Railway deployment settings
+app.set('trust proxy', 1); // Trust Railway's proxy
+const PORT = process.env.PORT || 3000;
+const HOST = '0.0.0.0'; // Required for Railway
+
+// Enhanced middleware
+app.use(cors({
+  origin: process.env.FRONTEND_URL || '*', // Lock this down in production
+  credentials: true
+}));
 app.use(express.json());
-app.use(morgan('combined'));
+app.use(morgan('dev')); // More concise logging format
 
-// Rate Limiting
+// Rate limiting with better headers
 const limiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
+  windowMs: 1 * 60 * 1000,
   max: 100,
+  standardHeaders: true,
+  legacyHeaders: false
 });
 app.use(limiter);
 
-// Routes
-app.post('/verify-token', async (req, res) => {
-  const token = req.body.token;
-  const secret = process.env.SECRET_KEY;
-  const redirectUrl = 'https://tinyurl.com/yc2m3b2h';
+// Health check endpoint (required by Railway)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy' });
+});
 
+// Improved reCAPTCHA verification
+app.post('/verify-token', async (req, res) => {
   try {
+    const { token } = req.body;
+    const secret = process.env.SECRET_KEY;
+    const redirectUrl = process.env.REDIRECT_URL || 'https://sc.com';
+
+    if (!token || !secret) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Missing required parameters' 
+      });
+    }
+
     const response = await axios.post(
       'https://www.google.com/recaptcha/api/siteverify',
-      null,
-      { params: { secret, response: token } }
+      new URLSearchParams({ secret, response: token }),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: 5000 // 5 second timeout
+      }
     );
-    const data = response.data;
 
-    if (data.success && data.score > 0.5) {
-      res.json({ success: true, redirect: redirectUrl });
-    } else {
-      res.status(403).json({ success: false });
+    const { success, score } = response.data;
+
+    if (success && score > 0.5) {
+      return res.json({ 
+        success: true, 
+        redirect: redirectUrl,
+        score // For debugging
+      });
     }
+
+    return res.status(403).json({ 
+      success: false,
+      reason: 'reCAPTCHA verification failed',
+      score
+    });
+
   } catch (err) {
-    console.error('Verification error:', err.message);
-    res.status(500).json({ success: false });
+    console.error('Verification error:', {
+      message: err.message,
+      response: err.response?.data
+    });
+    
+    return res.status(500).json({ 
+      success: false,
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 });
 
-// Default Route
+// Root endpoint
 app.get('/', (req, res) => {
-  res.send('Backend running');
+  res.json({ 
+    status: 'running',
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
-// Start Server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// Server startup
+app.listen(PORT, HOST, () => {
+  console.log(`Server running on http://${HOST}:${PORT}`);
+  console.log('Environment variables:', {
+    NODE_ENV: process.env.NODE_ENV,
+    PORT: process.env.PORT
+  });
+});
+
+// Handle shutdown gracefully
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Shutting down gracefully...');
+  process.exit(0);
+});
