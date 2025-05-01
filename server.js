@@ -1,9 +1,15 @@
-const express = require('express');
-const dotenv = require('dotenv');
-const axios = require('axios');
-const cors = require('cors');
-const rateLimit = require('express-rate-limit');
-const morgan = require('morgan');
+import express from 'express';
+import dotenv from 'dotenv';
+import axios from 'axios';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import morgan from 'morgan';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+// Fix for __dirname equivalent in ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 const app = express();
