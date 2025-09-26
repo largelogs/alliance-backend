@@ -68,7 +68,7 @@ app.post('/verify-token', async (req, res) => {
 
     const { success, score, 'error-codes': errors = [] } = response.data;
 
-    // Strict score validation (NEW: 0.7 threshold)
+    // Strict score validation (NEW: 0.5 threshold)
     if (!success) {
       return res.status(403).json({
         success: false,
@@ -77,12 +77,12 @@ app.post('/verify-token', async (req, res) => {
       });
     }
 
-    if (score < 0.7) { // Reject scores below 0.7
+    if (score < 0.5) { // Reject scores below 0.5
       return res.status(403).json({
         success: false,
-        reason: 'Low reCAPTCHA score (minimum: 0.7)',
+        reason: 'Low reCAPTCHA score (minimum: 0.5)',
         score,
-        requiredScore: 0.7
+        requiredScore: 0.5
       });
     }
 
