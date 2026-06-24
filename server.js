@@ -6,27 +6,34 @@ import morgan from 'morgan';
 import { setDefaultResultOrder } from 'dns';
 
 // =====================
-// CRITICAL RAILWAY FIXES
+// CRITICAL RAILWAY FIXES (VPN COMPATIBILITY)
 // =====================
+// Forces IPv4 resolution to prevent IPv6 timeout issues common with VPNs
 setDefaultResultOrder('ipv4first');
+
 const app = express();
 const PORT = process.env.PORT || 8080;
 
 // =====================
 // MIDDLEWARE
 // =====================
-app.set('trust proxy', 1);
+app.set('trust proxy', 1); // Essential for trusting X-Forwarded-For headers from proxies/VPNs
+
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
+
 app.use(express.json());
 app.use(morgan('combined'));
+
+// Relaxed rate limiting to accommodate shared VPN IPs
 app.use(rateLimit({
   windowMs: 60 * 1000,
-  max: 100,
+  max: 200, // Increased from 100 to reduce blocks on shared VPN exit nodes
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  skip: (req) => req.path === '/health' // Don't rate limit health checks
 }));
 
 // =====================
@@ -36,7 +43,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ready',
     timestamp: new Date().toISOString(),
-    ipMode: 'ipv4-only'
+    ipMode: 'ipv4-first'
   });
 });
 
@@ -60,7 +67,7 @@ app.post('/verify-token', async (req, res) => {
       new URLSearchParams({ secret, response: token }),
       {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 2500
+        timeout: 5000 // Increased timeout slightly for slower VPN connections
       }
     );
 
@@ -109,14 +116,5 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
 });
 
-server.keepAliveTimeout = 60000;
+server.keepAliveTimeout = 60000; // Keep connections alive longer for high-latency VPNs
 server.headersTimeout = 65000;
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('🛑 Received shutdown signal');
-  server.close(() => {
-    console.log('✅ Server terminated cleanly');
-    process.exit(0);
-  });
-});
